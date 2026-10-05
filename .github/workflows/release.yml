@@ -1,0 +1,68 @@
+name: Test and release bridge
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag (e.g. v0.1.0); empty runs checks only'
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: stable
+          cache: false
+      - run: go test -race ./...
+      - name: Root startup and HTTPS integration in a disposable container
+        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -a /src /work && chmod 755 /work && cd /work && sh scripts/check-linux.sh'
+      - name: Installer architecture, language and checksum regression
+        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -a /src /work && cd /work && sh scripts/test-installer.sh'
+      - run: go vet ./...
+      - run: sh -n install.sh
+      - run: shellcheck -S warning install.sh scripts/*.sh
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
+    needs: test
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: stable
+          cache: false
+      - name: Build Linux architectures and checksum assets
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eu
+          tag="${INPUT_VERSION:-$REF_TAG}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || { echo 'Use a semantic version tag'; exit 1; }
+          mkdir -p dist
+          for arch in amd64 arm64 386 armv6 armv7 riscv64 ppc64le s390x loong64 mips mipsle mips64 mips64le; do
+            goarch="$arch"
+            goarm=''
+            case "$arch" in armv6) goarch=arm; goarm=6 ;; armv7) goarch=arm; goarm=7 ;; esac
+            CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" GOARM="$goarm" GOMIPS=softfloat GOMIPS64=softfloat go build -trimpath -ldflags="-s -w -X main.version=$tag" -o "dist/new-api-ops-bridge-linux-$arch" .
+          done
+          sed -e "s|__REPOSITORY__|$REPOSITORY|g" -e "s|__RELEASE__|$tag|g" install.sh > dist/install.sh
+          cp LICENSE README.md SECURITY.md dist/
+          (cd dist && sha256sum new-api-ops-bridge-linux-* install.sh > checksums.txt)
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Publish assets from this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: gh release create "$RELEASE_TAG" dist/* --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "new-api Ops Bridge $RELEASE_TAG" --generate-notes
