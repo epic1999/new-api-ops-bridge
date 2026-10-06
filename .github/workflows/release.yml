@@ -21,10 +21,11 @@ jobs:
           go-version: stable
           cache: false
       - run: go test -race ./...
+      # Give the copies to container root so Git accepts runner-owned sources.
       - name: Root startup and HTTPS integration in a disposable container
-        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -a /src /work && chmod 755 /work && cd /work && sh scripts/check-linux.sh'
+        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -R /src /work && chmod 755 /work && cd /work && sh scripts/check-linux.sh'
       - name: Installer architecture, language and checksum regression
-        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -a /src /work && cd /work && sh scripts/test-installer.sh'
+        run: docker run --rm -v "$PWD:/src:ro" golang:1.25-bookworm sh -c 'cp -R /src /work && cd /work && sh scripts/test-installer.sh'
       - run: go vet ./...
       - run: sh -n install.sh
       - run: shellcheck -S warning install.sh scripts/*.sh
