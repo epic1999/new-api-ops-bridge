@@ -2,7 +2,7 @@
 
 Copyright (C) 2025 QuantumNous. AGPL-3.0-or-later.
 
-Verified locally on 2026-10-05. The independent bridge repository has not been pushed or published.
+The initial implementation was verified locally on 2026-10-05. The v1.1.0 section at the end lists the later GitHub Actions verification.
 
 - new-api frontend: 100 tests passed, 0 failures; production build succeeded. Relevant Go controller/settings tests passed. All 127 interface translation keys checked in eight locale files.
 - Chromium: actual site-model selection and administrator-provided repository/installer links verified. At 390 px and desktop widths, no page overflow; the credential flow rendered within the tool panel. Real DOMParser tests rejected external entity declarations, failed DAV properties, malformed encoded paths and paths outside the configured root.
@@ -18,3 +18,14 @@ The initial source snapshot also underwent an independent Codex Security audit. 
 The audit tool reported 9,240,789 total tokens across four participating threads, including 8,758,400 cached input tokens; its measurement uses thread rollouts and is not a separate estimate of only the bridge feature's incremental usage.
 
 Actual Nutstore accounts, paid upstream models, arbitrary customer firewall/TLS configurations, hosted Actions runs and every hardware/kernel combination were not exercised. Cross-compilation and known-vulnerability checks cannot establish zero vulnerabilities. Only publish after reviewing the code, permissions and Release publisher.
+
+## v1.1.0
+
+Verified in GitHub Actions on 2026-10-06 (ubuntu-latest runner; root tests in a disposable `golang:1.25-bookworm` container):
+
+- Race-enabled unit tests for the local CA: IP, IPv6 and domain chains verify; name constraints reject certificates for other hosts (the test was checked to fail when the constraints are removed); renewal window, CA reuse, CA replacement near expiry, legacy self-signed migration, untouched custom certificates and recovery of interrupted renewals.
+- Root integration: an expiring bridge certificate is renewed at startup with the same local CA and served over HTTPS; `renew-cert` replaces the server certificate, keeps the CA and prints no password; files stay root-owned with mode 600 and a foreign-owned CA key is refused.
+- Installer: unusable, loopback and playground-identical hosts and invalid origins are rejected before downloading; a missing terminal falls back to `--host` guidance instead of waiting; addresses are normalized; the checklist shows the real port, origin and a ufw rule; reinstalling keeps settings and warns about a different playground; private addresses get the local network permission note; 13 CPU mappings, six languages and the `ReadWritePaths` unit line pass.
+- `go vet`, ShellCheck and `govulncheck` (no known vulnerabilities).
+
+Not exercised: the hourly renewal restart under a real systemd, real browsers and phones trusting the local CA, and a live installation from the published Release on real hardware.
