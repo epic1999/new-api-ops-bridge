@@ -4,3 +4,5 @@
 config.json
 cert.pem
 key.pem
+ca.pem
+ca-key.pem

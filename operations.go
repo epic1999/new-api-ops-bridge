@@ -196,6 +196,21 @@ func (b *bridge) cancelTasks() {
 		t.Cancel()
 	}
 }
+
+// 数一下还在跑的后台任务，证书续期重启前要看
+func (b *bridge) activeTasks() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	active := 0
+	for _, t := range b.tasks {
+		t.mu.Lock()
+		if !t.Done {
+			active++
+		}
+		t.mu.Unlock()
+	}
+	return active
+}
 func (b *bridge) path(raw string) (string, error) {
 	if raw == "" || len(raw) > 4096 || strings.ContainsRune(raw, 0) {
 		return "", fmt.Errorf("invalid server path")
@@ -223,7 +238,7 @@ func (b *bridge) checkPath(path string) error {
 	}
 	for _, part := range strings.Split(path, "/") {
 		lower := strings.ToLower(part)
-		if lower == ".ssh" || lower == ".aws" || lower == ".gnupg" || strings.HasPrefix(lower, ".env") || lower == "id_rsa" || lower == "id_ed25519" || lower == "shadow" || lower == "key.pem" || lower == "config.json" && strings.Contains(path, "ops-bridge") {
+		if lower == ".ssh" || lower == ".aws" || lower == ".gnupg" || strings.HasPrefix(lower, ".env") || lower == "id_rsa" || lower == "id_ed25519" || lower == "shadow" || lower == "key.pem" || lower == "ca-key.pem" || lower == "config.json" && strings.Contains(path, "ops-bridge") {
 			return fmt.Errorf("credential files are blocked")
 		}
 	}

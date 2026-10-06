@@ -59,3 +59,6 @@ printf '%s  new-api-ops-bridge-linux-%s\n' "$(printf '0%.0s' 1 2 3 4 5 6 7 8 9 1
 if sh "$test_dir/install.sh" --origin https://ai.example --host server.example >/dev/null 2>&1;then echo 'Bad checksum accepted';exit 1;fi
 if sh "$test_dir/install.sh" --password chosen >/dev/null 2>&1;then echo 'Custom password accepted';exit 1;fi
 printf 'PASS installer rejects corrupted assets and custom passwords\n'
+# 启动时要写证书目录续证，unit 必须单独放开它
+grep -qx 'ReadWritePaths=/etc/new-api-ops-bridge' /etc/systemd/system/new-api-ops-bridge.service
+printf 'PASS service unit allows certificate renewal\n'

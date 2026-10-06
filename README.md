@@ -1,72 +1,76 @@
 # new-api Ops Bridge
 
-Copyright (C) 2025 QuantumNous. AGPL-3.0-or-later.
+在自己的 Linux 服务器上安装运维桥，即可让 new-api 训练场里的 AI 查看服务器状态、处理文件和执行任务。浏览器通过 HTTPS 直连服务器，无需向网站提供 SSH 密码或私钥。
 
-An open-source Linux server bridge for the new-api playground. The model proposes a tool name and arguments; the **browser** adds locally stored credentials and talks directly to this bridge over HTTPS. No SSH credentials are sent to new-api. Shell output, selected file content and other tool results are returned to the selected model through the normal new-api model gateway. This is a real server connection, not an offline-only system.
+## 能做什么
 
-## Publish your own repository
+- 查看 CPU、内存、磁盘、运行时间，执行 Shell 命令。
+- 浏览目录、读取文件，在服务器与浏览器工作区之间上传和下载文件。
+- 创建和管理定时任务，启动、查看或停止后台任务。
+- 检测服务器对外的 DNS / TCP 连通性，测量下载速度。
 
-This directory is an independent Go module and Git repository. No remote is configured and nothing has been pushed. Create a public GitHub repository under your chosen account, then manually:
+连接后可以直接提问：“检查服务器的磁盘占用”“下载指定目录里的日志”“每天凌晨 3 点运行这个备份脚本”。
 
-```sh
-git remote add origin https://github.com/YOUR_ACCOUNT/new-api-ops-bridge.git
-git push -u origin main
-git tag v0.1.0
-git push origin v0.1.0
-```
+## 安装与连接
 
-The Actions workflow runs race tests, vet, ShellCheck and govulncheck, builds 13 Linux targets (amd64, arm64, 386, ARMv6/v7, riscv64, ppc64le, s390x, loong64, MIPS/MIPS64 little/big endian), and publishes public **GitHub Release assets** and SHA-256 checksums. The published `install.sh` is stamped with the actual `github.repository` and release tag; forks need no hard-coded author URL. The playground accepts `owner/repository` and generates the matching installer command. Release assets can be downloaded without a GitHub access token; Actions artifacts would require authentication and expire, so they are not the installer source.
+准备一台可使用 root 或 sudo 的 Linux 服务器，一键安装需要 systemd；new-api 需包含训练场的「服务器运维」功能，并选用支持工具调用的模型。
 
-The standalone source requires Go 1.25+ and has no third-party runtime dependencies. Use an updated Go toolchain. Architectures must also have a Linux kernel supported by that Go version; architecture builds are not real-hardware installation tests.
+安装前请确认 [Releases](https://github.com/epic1999/new-api-ops-bridge/releases) 已发布程序和 `install.sh`。安装脚本从 Release 下载，直接运行源码中的 `install.sh` 无法安装。
 
-A local initial commit is prepared. Configure the public repository and installer URLs in new-api admin General settings after publishing. See [VERIFICATION.md](VERIFICATION.md) for the completed local checks and their limits.
+1. 在训练场设置中开启「工具调用」，展开「服务器运维」→「安装开源服务器桥」。
+2. 在「桥的 GitHub 仓库」填写 `epic1999/new-api-ops-bridge`，选择安装语言，复制页面生成的安装命令。
+3. 在服务器终端执行命令，按提示填写公网 IP 或域名。脚本会识别 CPU、校验下载文件并安装后台服务，自动生成端口和强密码。
+4. 在防火墙和云安全组中，仅向自己的 IP / VPN 放行输出的端口。用浏览器打开桥 URL，核对安装输出的证书指纹后信任证书；也可以导入本机 CA，之后续期无需重新信任（见「证书与自动续期」）。
+5. 把输出的 **Bridge URL** 和 **Bridge password** 填入「桥 URL」和「桥密码」，点击「测试连接」，再开启「服务器运维」工具组。
 
-## Install
+**密码只填在连接设置里，不要发送到聊天中。** 安装命令会自动绑定当前训练场的网站地址。
 
-Use the command generated in the playground after publishing your first Release. The installer defaults to Simplified Chinese; `--lang en|fr|ru|ja|vi` selects other languages. It recognizes CPU architecture, checks the checksum, creates an unprivileged `new-api-ops` system account and installs a systemd service. It asks only for your public IP/domain if not auto-detected; the playground origin is already embedded in the command. Public-IP detection contacts `api.ipify.org` from your server and sends no bridge secret. The installer does not change firewall rules. Restrict the random port to your own client IP/VPN.
+## 使用须知
 
-The daemon generates a 256-bit password, an available random port between 20000 and 59999, and a self-signed ECDSA TLS certificate. There are **no password/port input flags**. Configuration and TLS private key remain root-owned with directory mode 0700 and file mode 0600. `serve` reads them and then drops all supplementary groups, UID/GID and privilege escalation capability before accepting any requests. Shell children receive a small clean environment with no bridge secrets. Linux core dumps and ptrace against the daemon are disabled; systemd adds resource limits and protects system configuration.
+- 普通模式执行命令和写入前会要求确认；YOLO 模式跳过确认，仅用于自己的服务器和可信任务。操作以 `new-api-ops` 低权限账户执行，需要按实际用途授予目录权限。
+- 桥 URL 和密码保存在当前浏览器，不随对话或模型请求发送；命令输出和读取的文件内容会经 new-api 发送给所选模型。
+- 文件上传、下载单次最多 16 MB，上传不覆盖已有文件。普通命令最长 120 秒；后台任务最多同时运行 4 个，每个最长 1 小时，关闭页面后继续运行，桥服务重启后任务记录丢失。
+- 定时任务使用服务器本地时间，最多 100 项，由桥服务运行；服务停止期间不执行、不补跑。网络检测反映服务器向外的连通性，不能判断其他地区能否访问这台服务器。
 
-Copy the generated **Bridge URL** and **Bridge password** into tool settings, never into chat. Open that HTTPS URL in your browser and verify the certificate fingerprint shown on your server before trusting the self-signed certificate. Browser trust varies: if it still rejects API fetches, import this exact certificate into your OS/browser trust store or replace `/etc/new-api-ops-bridge/cert.pem` and `key.pem` with a CA-trusted certificate for the same hostname, keeping owner-only permissions, then restart **the bridge service**. Browsers with stricter certificate policies need a CA-trusted certificate. Do not disable TLS verification or use HTTP as a fallback. Renew before the generated certificate expires in one year. For an already initialized installation, re-running the installer preserves its existing origin, hostname, port and password.
+## 证书与自动续期
+
+- 安装时会生成一个只对这台服务器有效的本机 CA（有效期 10 年），并用它签发服务证书（有效期 1 年）。
+- 服务证书到期前 30 天内自动续期：桥会在没有后台任务时自动重启一次，约 10 秒，不影响定时任务；剩余不足 7 天时不再等待后台任务结束。
+- 将本机 CA 导入系统信任后，续期无需任何操作；只在浏览器中选择“继续访问”的，每次续期后需要重新信任一次。
+- 导入本机 CA：在服务器上运行 `sudo cat /etc/new-api-ops-bridge/ca.pem`，将输出保存为 `bridge-ca.crt`，核对 `sudo new-api-ops-bridge credentials` 显示的本机 CA 指纹后导入。Windows 双击证书，安装到「受信任的根证书颁发机构」；macOS 在「钥匙串访问」中导入并设为「始终信任」；Firefox 在「设置 → 隐私与安全 → 证书 → 查看证书 → 证书颁发机构」中导入。
+- 本机 CA 带有名称约束，只能为这台服务器的 IP 或域名签发证书；CA 私钥只保存在服务器上，仅 root 可读。
+- 立即续期：运行 `sudo new-api-ops-bridge renew-cert`，再重启桥服务。
+- 使用自己的受信任证书：替换 `/etc/new-api-ops-bridge/cert.pem` 和 `key.pem`（root 所有、权限 600）后重启桥服务。自定义证书不会自动续期，需要自行续期；删除这两个文件后运行 `renew-cert`，即可恢复由桥自动管理。
+- 未使用 systemd 时，桥会在续期前退出，需要由进程管理器重新启动。
+- 从旧版本升级：重新运行训练场生成的安装命令，原有地址、端口和密码保持不变。旧证书会在首次续期时改由本机 CA 签发，届时需要重新信任一次。
+
+## 常见问题
+
+**安装下载返回 404？** 检查仓库名称以及是否已发布包含安装脚本和对应 CPU 程序的 Release。
+
+**测试连接失败？** 检查 URL、密码、防火墙和安全组，并确认安装时绑定的网站地址与当前训练场一致。默认生成的证书需要浏览器信任；如果仍被拦截，可导入本机 CA，或替换为域名对应的受信任证书后重启桥服务。证书续期后浏览器再次拦截，说明尚未导入本机 CA，重新信任一次即可。保持 HTTPS，不要关闭证书校验。
+
+**查看连接信息或服务日志：**
 
 ```sh
 sudo new-api-ops-bridge credentials
-sudo new-api-ops-bridge rotate
-sudo systemctl restart new-api-ops-bridge   # apply password/certificate changes
+sudo systemctl status new-api-ops-bridge
 sudo journalctl -u new-api-ops-bridge -n 30
 ```
 
-This is not a server reboot. There are no shutdown/reboot tools. The service account cannot administer the whole server by default. Give it narrowly scoped directory permissions as needed; do not grant unrestricted sudo. systemd `ProtectSystem=full` additionally makes system configuration read-only. Cron uses a bridge-managed persistent scheduler, so it works with no-new-privileges and needs no setuid cron helper. It does not edit the OS crontab. Jobs run only while the bridge is active, in server local time, up to 100 entries; stopped periods are not replayed. Each run is a tracked background task, limited to one hour and four concurrent tasks. Job listing includes the last task ID or a capacity error.
-
-Without systemd, build the binary, create a dedicated account, initialize as root and run `sudo ./new-api-ops-bridge serve` under your preferred process supervisor. The process still drops privileges internally. The automated installer intentionally reports this prerequisite instead of making distribution-specific changes.
-
-## Capabilities and limits
-
-- Server information, CPU/memory/disk/uptime; shell commands with bounded output and 120-second timeout.
-- Directory listing; bounded file reads; file download/upload (16 MB; uploads never overwrite).
-- Bridge-managed persistent cron listing/addition/deletion. Five numeric fields support lists, ranges and steps; existing jobs and the OS crontab are preserved.
-- Up to four background tasks, up to one hour each, status/output/cancellation by task ID. Tasks continue after the page closes, but task records are held in memory and disappear on bridge restart. Spawned process groups are killed at timeout/cancellation/completion.
-- DNS/TCP outbound reachability probes to public targets and an 8 MB download throughput test via Cloudflare. A successful outbound probe **does not prove** that inbound access from a region is unblocked. Browser connection testing verifies reachability only from the user's present browser network.
-
-Normal mode asks approval before commands and writes. Playground YOLO skips approval. The bridge enforces authentication, exact Origin/Host, input/output limits and permissions regardless of UI mode. Commands run with the dedicated account's filesystem and network permissions, not in an operating-system sandbox. Commands can cause irreversible changes to resources that account can access. A small reboot/destructive-command filter provides protection against obvious accidents, but arbitrary scripts can bypass text filters; never claim every command is safe or that this software has zero vulnerabilities. The non-root account, no-new-privileges setting and absence of a reboot endpoint are the enforceable protections.
-
-## Protocol
-
-`POST /v1/operate`, `Origin: <configured origin>`, `Authorization: Bearer <generated password>`, `Content-Type: application/json`. Body: `{ "action": "info", "args": {} }`. No cookies, credential query parameters, wildcard origins, telemetry or gateway callback endpoints. Unknown fields/actions and oversized requests are rejected. TLS is required by the executable. The front end rejects credential-bearing redirects, so secrets cannot be carried to a redirected destination.
-
-Operations: `info`, `execute`, `list`, `read`, `download`, `upload`, `cron_list`, `cron_add`, `cron_delete`, `task_start`, `task_status`, `task_cancel`, `network`, `speedtest`. See `args` in `main.go` and `operations.go`. The password never appears in API responses or service logs. Random ports reduce common scanning noise; they are not authentication.
-
-## Verification
+**更换密码：**
 
 ```sh
-go test -race ./...
-# In a disposable root Linux container (creates only the test account):
-sh scripts/check-linux.sh
-sh scripts/check-builds.sh
-go vet ./...
-sh -n install.sh
-shellcheck -S warning install.sh
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+sudo new-api-ops-bridge rotate
+sudo systemctl restart new-api-ops-bridge
 ```
 
-Only configure bridges you own and trust. Review the open-source code and Release publisher before running its installer. Release checksums verify downloaded bytes against that publisher's manifest; they do not independently establish publisher trust.
+`rotate` 只更换密码，不更换证书。完成后更新训练场中的桥密码。
+
+## 站点管理员
+
+在 new-api 后台「系统设置 → 常规设置」中，将「运维桥开源仓库链接」设为 `https://github.com/epic1999/new-api-ops-bridge`。「运维桥一键安装脚本链接」可留空，系统会根据仓库生成 Release 下载地址；维护者需先发布 Release。
+
+源码构建需要 Go 1.25+，运行 `go build .`。测试记录见 [VERIFICATION.md](VERIFICATION.md)，安全说明见 [SECURITY.md](SECURITY.md)。
+
+Copyright (C) 2025 QuantumNous. [AGPL-3.0-or-later](LICENSE).

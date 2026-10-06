@@ -77,6 +77,7 @@ install -m 0755 "$temp_dir/bridge" /usr/local/bin/new-api-ops-bridge
 if [ ! -f /etc/new-api-ops-bridge/config.json ]; then
   /usr/local/bin/new-api-ops-bridge init --origin "$origin" --public-host "$host" --user "$account"
 fi
+# 桥启动时要在降权前续证，只放开自己的证书目录，/etc 其余部分仍只读
 cat > /etc/systemd/system/new-api-ops-bridge.service <<'UNIT'
 [Unit]
 Description=new-api browser-to-server operations bridge
@@ -90,6 +91,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+ReadWritePaths=/etc/new-api-ops-bridge
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -111,4 +113,4 @@ if ! systemctl is-active --quiet new-api-ops-bridge.service; then
 fi
 /usr/local/bin/new-api-ops-bridge credentials
 msg 'done' '安装完成。将桥 URL 和密码填到训练场工具设置，切勿粘贴到聊天中。' 'Installed. Paste the URL and password into tool settings, never into chat.' 'Installé. Collez URL et mot de passe dans les paramètres, jamais dans le chat.' 'Готово. Вставьте URL и пароль в настройки, не в чат.' '完了。URL とパスワードをツール設定に貼り付けてください。チャットに入力しないでください。' 'Đã cài. Dán URL và mật khẩu vào cài đặt công cụ, không vào chat.'
-msg tls '首次连接：在浏览器打开桥 URL，核对 TLS 指纹后信任证书。生产环境请替换为受信任证书。只向你的 IP 开放输出的端口；脚本不会修改防火墙。' 'First connection: open the bridge URL, compare the TLS fingerprint and trust the certificate. Use a trusted certificate in production. Allow only your IP through the port; this script does not change the firewall.' 'Ouvrez cette URL, vérifiez cette empreinte TLS et faites confiance au certificat. Utilisez un certificat reconnu en production. Limitez le port à votre IP ; le pare-feu reste inchangé.' 'Откройте URL, сверьте отпечаток TLS и доверьтесь сертификату. В production используйте доверенный сертификат. Разрешите порт только для своего IP; скрипт не меняет firewall.' 'URL を開き TLS 指紋を確認して証明書を信頼してください。本番では信頼済み証明書を使用し、ポートは自分の IP のみに許可してください。ファイアウォールは変更しません。' 'Mở URL, đối chiếu dấu vân tay TLS rồi tin cậy chứng chỉ. Dùng chứng chỉ đáng tin ở môi trường thật. Chỉ mở cổng cho IP của bạn; script không đổi tường lửa.'
+msg tls '首次连接：在浏览器打开桥 URL，核对 TLS 指纹后信任证书。证书到期前会自动续期；将上方的本机 CA 证书导入系统信任一次，续期后无需重新信任。只向你的 IP 开放输出的端口；脚本不会修改防火墙。' 'First connection: open the bridge URL, compare the TLS fingerprint and trust the certificate. The certificate renews automatically before it expires; import the local CA certificate shown above into your system trust store once so renewals need no new trust. Allow only your IP through the port; this script does not change the firewall.' 'Ouvrez cette URL, vérifiez cette empreinte TLS et faites confiance au certificat. Le certificat se renouvelle automatiquement avant expiration ; importez une seule fois le certificat de votre AC locale indiqué ci-dessus dans le magasin de confiance du système pour éviter de le refaire après chaque renouvellement. Limitez le port à votre IP ; le pare-feu reste inchangé.' 'Откройте URL, сверьте отпечаток TLS и доверьтесь сертификату. Сертификат продлевается автоматически до истечения срока; один раз импортируйте указанный выше сертификат локального CA в системное хранилище доверия, чтобы не подтверждать доверие после продлений. Разрешите порт только для своего IP; скрипт не меняет firewall.' 'URL を開き TLS 指紋を確認して証明書を信頼してください。証明書は期限前に自動更新されます。上に表示されたローカル CA 証明書を一度システムの信頼ストアに登録すると、更新後に再度信頼する必要はありません。ポートは自分の IP のみに許可してください。ファイアウォールは変更しません。' 'Mở URL, đối chiếu dấu vân tay TLS rồi tin cậy chứng chỉ. Chứng chỉ tự gia hạn trước khi hết hạn; nhập chứng chỉ CA cục bộ hiển thị ở trên vào kho tin cậy của hệ thống một lần để không phải tin cậy lại sau mỗi lần gia hạn. Chỉ mở cổng cho IP của bạn; script không đổi tường lửa.'

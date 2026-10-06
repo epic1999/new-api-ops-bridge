@@ -2,15 +2,7 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net"
 	"os"
 	"os/user"
@@ -83,7 +75,8 @@ func initialize(state, rawOrigin, host, username string) error {
 	if port == 0 {
 		return fmt.Errorf("cannot allocate a random port")
 	}
-	if err = createCertificate(state, host); err != nil {
+	// 首次安装直接签本机 CA 和服务证书；上次装到一半留下的有效证书会接着用
+	if _, err = ensureCertificate(state, host, time.Now(), false); err != nil {
 		return err
 	}
 	c := config{Password: password, Port: port, Origin: origin, PublicHost: host, User: username, Home: u.HomeDir}
@@ -95,41 +88,7 @@ func initialize(state, rawOrigin, host, username string) error {
 }
 func printCredentials(c config, state string) {
 	fmt.Printf("\nBridge URL: https://%s\nBridge password: %s\nAllowed browser origin: %s\nExecution user: %s\n", net.JoinHostPort(c.PublicHost, fmt.Sprint(c.Port)), c.Password, c.Origin, c.User)
-	cert, err := os.ReadFile(filepath.Join(state, "cert.pem"))
-	if err == nil {
-		block, _ := pem.Decode(cert)
-		if block != nil {
-			fmt.Printf("TLS SHA-256 fingerprint: %X\n", sha256.Sum256(block.Bytes))
-		}
-	}
-}
-func createCertificate(state, host string) error {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return err
-	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return err
-	}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "new-api Ops Bridge"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
-	if ip := net.ParseIP(host); ip != nil {
-		template.IPAddresses = []net.IP{ip}
-	} else {
-		template.DNSNames = []string{host}
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		return err
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return err
-	}
-	if err = writeNewPrivateFile(filepath.Join(state, "cert.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})); err != nil {
-		return err
-	}
-	return writeNewPrivateFile(filepath.Join(state, "key.pem"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	printCertificateInfo(state)
 }
 
 func writeNewPrivateFile(path string, data []byte) error {

@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -271,7 +273,7 @@ func writeConfig(state string, c config) error {
 }
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("usage: new-api-ops-bridge init|serve|credentials|rotate|version [options]")
+		log.Fatal("usage: new-api-ops-bridge init|serve|credentials|rotate|renew-cert|version [options]")
 	}
 	if os.Args[1] == "version" {
 		fmt.Println(version)
@@ -313,10 +315,26 @@ func main() {
 				}
 			}
 		}
+	case "renew-cert":
+		// 手动立即续证，原 CA 能用就接着用；不打印密码，免得留在终端记录里
+		if err = requireRoot(); err == nil {
+			var c config
+			if c, err = readConfig(*state); err == nil {
+				if _, err = ensureCertificate(*state, c.PublicHost, time.Now(), true); err == nil {
+					printCertificateInfo(*state)
+					fmt.Println("Restart the bridge service to use the new certificate. Browsers that trust the local CA need no further action; otherwise trust the new certificate again.")
+				}
+			}
+		}
 	case "serve":
 		err = serve(*state)
 	default:
 		err = fmt.Errorf("unknown command")
+	}
+	// 非零退出码让 systemd 的 Restart=on-failure 重新拉起，启动时完成续证
+	if errors.Is(err, errCertificateRenewal) {
+		log.Print(err)
+		os.Exit(renewExitCode)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -330,15 +348,26 @@ func serve(state string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{"cert.pem", "key.pem"} {
-		info, statErr := os.Lstat(filepath.Join(state, name))
-		if statErr != nil || !info.Mode().IsRegular() || !rootOwned(info) || info.Mode().Perm()&0077 != 0 {
-			return fmt.Errorf("TLS files must be root-owned regular files with mode 600")
+	// 降权前还是 root，趁这时把快到期的证书续掉；续不了就先用旧证书顶着
+	material, renewErr := ensureCertificate(state, c.PublicHost, time.Now(), false)
+	if len(material.pair.Certificate) == 0 {
+		if renewErr == nil {
+			renewErr = fmt.Errorf("no usable TLS certificate")
+		}
+		return renewErr
+	}
+	if renewErr != nil {
+		fmt.Printf("TLS certificate renewal failed: %v. Keeping the current certificate.\n", renewErr)
+	}
+	if material.renewed {
+		fmt.Printf("TLS certificate renewed; valid until %s; SHA-256 fingerprint %s.\n", formatTime(material.leaf.NotAfter), fingerprint(material.leaf.Raw))
+		if material.newCA {
+			fmt.Printf("A new local CA was created (SHA-256 %s). Import %s again, or trust the new certificate in the browser.\n", fingerprint(material.ca.Raw), filepath.Join(state, "ca.pem"))
 		}
 	}
-	pair, err := tls.LoadX509KeyPair(filepath.Join(state, "cert.pem"), filepath.Join(state, "key.pem"))
-	if err != nil {
-		return err
+	autoRenew := material.managed && renewErr == nil
+	if !autoRenew && time.Until(material.leaf.NotAfter) <= renewBefore {
+		warnCertificateExpiry(material.leaf.NotAfter)
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort("", fmt.Sprint(c.Port)))
 	if err != nil {
@@ -353,14 +382,24 @@ func serve(state string) error {
 	}
 	b := newBridge(c)
 	b.state = filepath.Clean(state)
-	srv := &http.Server{Handler: b, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 20 * time.Second, MaxHeaderBytes: 8192, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}, ErrorLog: log.New(os.Stderr, "bridge: ", 0)}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	srv := &http.Server{Handler: b, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 20 * time.Second, MaxHeaderBytes: 8192, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material.pair}}, ErrorLog: log.New(os.Stderr, "bridge: ", 0)}
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// 看门狗要续证时也走这个 ctx，跟收到退出信号一样优雅收尾
+	ctx, cancelRun := context.WithCancel(signalCtx)
+	defer cancelRun()
 	if err = b.loadCron(); err != nil {
 		return err
 	}
 	go b.runCron(ctx)
+	var renewDue atomic.Bool
+	go b.watchCertificate(ctx, material.leaf.NotAfter, autoRenew, func() {
+		renewDue.Store(true)
+		cancelRun()
+	})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		b.cancelTasks()
 		timeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -369,8 +408,13 @@ func serve(state string) error {
 	}()
 	fmt.Printf("new-api Ops Bridge %s listening on HTTPS port %d as %s; passwords are never logged.\n", version, c.Port, c.User)
 	err = srv.Serve(tls.NewListener(listener, srv.TLSConfig))
-	if err == http.ErrServerClosed {
-		return nil
+	if err != http.ErrServerClosed {
+		return err
 	}
-	return err
+	// Serve 一收到 Shutdown 就返回了，等在途请求收尾再退出
+	<-stopped
+	if renewDue.Load() {
+		return errCertificateRenewal
+	}
+	return nil
 }
