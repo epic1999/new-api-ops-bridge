@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -18,9 +19,7 @@ import (
 // 把签发结果转成跟状态目录一样的文件表
 func filesOf(writes []pemFile, base map[string][]byte) map[string][]byte {
 	files := map[string][]byte{}
-	for name, data := range base {
-		files[name] = data
-	}
+	maps.Copy(files, base)
 	for _, f := range writes {
 		files[f.name] = f.data
 	}

@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -11,6 +12,30 @@ import (
 	"strings"
 	"time"
 )
+
+// 统一成浏览器 Host 头里的写法：域名小写、去掉结尾的点，IP 用标准格式；
+// 跟训练场同一个主机名的直接拒绝，前端不会把桥密码发给网站自己
+func normalizePublicHost(host, origin string) (string, error) {
+	host = strings.TrimSuffix(strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]")), ".")
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	if !validHost(host) {
+		return "", fmt.Errorf("provide --public-host with your public IP or domain")
+	}
+	site, err := url.Parse(origin)
+	if err != nil {
+		return "", err
+	}
+	siteHost := strings.ToLower(site.Hostname())
+	if ip := net.ParseIP(siteHost); ip != nil {
+		siteHost = ip.String()
+	}
+	if host == siteHost {
+		return "", fmt.Errorf("--public-host must differ from the playground host; browsers never send bridge credentials to the playground itself, so use the server IP or a separate subdomain")
+	}
+	return host, nil
+}
 
 func validHost(host string) bool {
 	if net.ParseIP(host) != nil {
@@ -22,12 +47,13 @@ func initialize(state, rawOrigin, host, username string) error {
 	if err := requireRoot(); err != nil {
 		return err
 	}
-	origin, err := validOrigin(rawOrigin)
+	// 浏览器发来的 Origin 主机名总是小写，存成一样的才对得上
+	origin, err := validOrigin(strings.ToLower(rawOrigin))
 	if err != nil {
 		return err
 	}
-	if !validHost(host) {
-		return fmt.Errorf("provide --public-host with your public IP or domain")
+	if host, err = normalizePublicHost(host, origin); err != nil {
+		return err
 	}
 	u, err := user.Lookup(username)
 	if err != nil || u.Uid == "0" {

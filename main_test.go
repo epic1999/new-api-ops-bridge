@@ -131,3 +131,28 @@ func TestBoundedOutput(t *testing.T) {
 		t.Fatal("unbounded output")
 	}
 }
+func TestNormalizePublicHost(t *testing.T) {
+	cases := []struct{ host, origin, want string }{
+		{"Bridge.Example.COM.", "https://ai.example", "bridge.example.com"},
+		{" 203.0.113.7 ", "https://ai.example", "203.0.113.7"},
+		{"[2001:0DB8:0:0::7]", "https://ai.example", "2001:db8::7"},
+		{"127.0.0.1", "https://ai.example", "127.0.0.1"},
+	}
+	for _, tc := range cases {
+		if got, err := normalizePublicHost(tc.host, tc.origin); err != nil || got != tc.want {
+			t.Fatalf("%q: got %q %v", tc.host, got, err)
+		}
+	}
+	// 跟训练场同主机名（大小写、IPv6 写法不同也算）一律拒绝，格式不对的也拒绝
+	for _, tc := range []struct{ host, origin string }{
+		{"AI.example", "https://ai.example"},
+		{"ai.example", "https://ai.example:8443"},
+		{"2001:db8::7", "https://[2001:0db8::7]"},
+		{"bad host", "https://ai.example"},
+		{"", "https://ai.example"},
+	} {
+		if _, err := normalizePublicHost(tc.host, tc.origin); err == nil {
+			t.Fatalf("%q accepted for %s", tc.host, tc.origin)
+		}
+	}
+}
